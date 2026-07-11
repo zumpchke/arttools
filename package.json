@@ -1,0 +1,8 @@
+{
+  "urls": [
+    ["arttools/__init__.py", "arttools/__init__.py"],
+    ["arttools/dmxrx.py", "arttools/dmxrx.py"],
+    ["arttools/mdns_responder.py", "arttools/mdns_responder.py"]
+  ],
+  "version": "0.1"
+}
