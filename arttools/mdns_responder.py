@@ -91,7 +91,7 @@ class MDNSResponder:
         print("mDNS: Listening for queries on", self.hostname + ".local at", self.ip)
         
         while self.running:
-            events = poll.poll(100)  # 100ms poll
+            events = poll.poll(10)  # 10ms poll
             if events:
                 try:
                     data, addr = self.sock.recvfrom(512)
