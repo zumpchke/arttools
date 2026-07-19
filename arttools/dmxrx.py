@@ -25,7 +25,9 @@ class AsyncDMXReceiver:
         self.re = Pin(re_pin, Pin.OUT, value=0)
 
         self.max_channels = max_channels
-        self._min_frame_len = max_channels + 1  # start code + all channels present
+        # ESP-IDF UART pushes a framing-error 0x00 into the buffer at BREAK detection,
+        # so a valid frame is: [0x00 artifact, 0x00 start code, ch1..chN, ...trailing].
+        self._min_frame_len = max_channels + 2
         self.channels = [0] * max_channels
         self._latest_frame = None
         self._frame_count = 0
@@ -41,13 +43,12 @@ class AsyncDMXReceiver:
     def _on_break(self, uart):
         """Fires on DMX BREAK — the buffer holds the frame that just ended."""
         data = uart.read()
-        if not data or len(data) < self._min_frame_len or data[0] != 0x00:
+        if not data or len(data) < self._min_frame_len:
+            return
+        if data[0] != 0x00 or data[1] != 0x00:
             return
 
-        # DEBUG: print length + first 8 bytes so we can see BREAK artifacts
-        print("len=", len(data), "head=", bytes(data[:8]))
-
-        channels = data[1 : 1 + self.max_channels]
+        channels = data[2 : 2 + self.max_channels]
         if len(channels) >= self.max_channels:
             self._latest_frame = list(channels)
             self._frame_count += 1
