@@ -25,6 +25,7 @@ class AsyncDMXReceiver:
         self.re = Pin(re_pin, Pin.OUT, value=0)
 
         self.max_channels = max_channels
+        self._min_frame_len = max_channels + 1  # start code + all channels present
         self.channels = [0] * max_channels
         self._latest_frame = None
         self._frame_count = 0
@@ -40,18 +41,11 @@ class AsyncDMXReceiver:
     def _on_break(self, uart):
         """Fires on DMX BREAK — the buffer holds the frame that just ended."""
         data = uart.read()
-        if not data:
+        if not data or len(data) < self._min_frame_len or data[0] != 0x00:
             return
 
-        # Skip any BREAK-artifact bytes at the head, then expect start code 0x00.
-        i = 0
-        while i < len(data) and i < 4 and data[i] != 0x00:
-            i += 1
-        if i >= len(data) or data[i] != 0x00:
-            return
-
-        channels = data[i + 1 : i + 1 + self.max_channels]
-        if channels:
+        channels = data[1 : 1 + self.max_channels]
+        if len(channels) >= self.max_channels:
             self._latest_frame = list(channels)
             self._frame_count += 1
 
