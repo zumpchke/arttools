@@ -44,6 +44,9 @@ class AsyncDMXReceiver:
         if not data or len(data) < self._min_frame_len or data[0] != 0x00:
             return
 
+        # DEBUG: print length + first 8 bytes so we can see BREAK artifacts
+        print("len=", len(data), "head=", bytes(data[:8]))
+
         channels = data[1 : 1 + self.max_channels]
         if len(channels) >= self.max_channels:
             self._latest_frame = list(channels)
