@@ -1,5 +1,4 @@
 from machine import UART, Pin
-import uos
 
 try:
     import asyncio
@@ -8,109 +7,73 @@ except ImportError:
 
 
 class AsyncDMXReceiver:
-    def __init__(self, uart_id=0, de_pin=5, re_pin=4):
-        """
-        Simple async DMX receiver
-        de_pin: Driver Enable pin on MAX485 (GPIO5/D1)
-        re_pin: Receiver Enable pin on MAX485 (GPIO4/D2)
-        """
-        # Initialize UART for DMX (250000 baud, 8N2)
-        self.uart = UART(uart_id, baudrate=250000, bits=8, parity=None, stop=2)
+    """DMX-512 receiver using ESP32 UART BREAK detection for frame alignment."""
 
-        # Initialize control pins for MAX485
-        self.de = Pin(de_pin, Pin.OUT)
-        self.re = Pin(re_pin, Pin.OUT)
+    def __init__(self, uart_id=2, de_pin=4, re_pin=5, tx_pin=17, rx_pin=16, max_channels=32):
+        self.uart = UART(
+            uart_id,
+            baudrate=250000,
+            bits=8,
+            parity=None,
+            stop=2,
+            tx=tx_pin,
+            rx=rx_pin,
+            rxbuf=1024,
+        )
 
-        # Set MAX485 to receive mode (DE=LOW, RE=LOW)
-        self.de.value(0)
-        self.re.value(0)
+        self.de = Pin(de_pin, Pin.OUT, value=0)
+        self.re = Pin(re_pin, Pin.OUT, value=0)
 
-        # Buffer for channels
-        self.channels = [0] * 8
+        self.max_channels = max_channels
+        self.channels = [0] * max_channels
+        self._latest_frame = None
+        self._frame_count = 0
+
+        if not hasattr(UART, "IRQ_BREAK"):
+            raise RuntimeError(
+                "UART.IRQ_BREAK not available in this MicroPython build — "
+                "upgrade firmware or use a polling-based DMX parser."
+            )
+
+        self.uart.irq(handler=self._on_break, trigger=UART.IRQ_BREAK)
+
+    def _on_break(self, uart):
+        """Fires on DMX BREAK — the buffer holds the frame that just ended."""
+        data = uart.read()
+        if not data:
+            return
+
+        # Skip any BREAK-artifact bytes at the head, then expect start code 0x00.
+        i = 0
+        while i < len(data) and i < 4 and data[i] != 0x00:
+            i += 1
+        if i >= len(data) or data[i] != 0x00:
+            return
+
+        channels = data[i + 1 : i + 1 + self.max_channels]
+        if channels:
+            self._latest_frame = list(channels)
+            self._frame_count += 1
 
     def read_channels(self):
-        """
-        Simple read: grab whatever data is available and parse it
-        Returns list of first 8 channels or None if no data
-        """
-        if self.uart.any():
-            # Read available data
-            data = self.uart.read()
-            if data and len(data) >= 9:  # start_code + 8 channels
-                # DMX format: [start_code, ch1, ch2, ...]
-                # Start code is usually 0x00
-                if data[0] == 0:
-                    self.channels = list(data[1:9])
-                    return self.channels
-                # If no start code at position 0, try to find it
-                elif len(data) >= 8:
-                    self.channels = list(data[0:8])
-                    return self.channels
-        return None
+        """Return the most recent complete frame, or None if none pending."""
+        frame = self._latest_frame
+        if frame is None:
+            return None
+        self._latest_frame = None
+        self.channels = frame
+        return frame
 
     async def continuous_read(self, callback=None, delay_ms=20):
-        """
-        Continuously read and print DMX channels (async version)
-
-        Args:
-            callback: Optional callback function(channels) called when values change
-            delay_ms: Polling interval in milliseconds
-        """
-        print("DMX Async Receiver Started")
-        print("Press Ctrl+C to stop")
-        print("-" * 40)
-
-        last_channels = [-1] * 8
-
+        print("DMX Async Receiver Started (BREAK-triggered)")
+        last = None
         try:
             while True:
-                result = self.read_channels()
-
-                if result:
-                    # Only process if values changed
-                    if result != last_channels:
-                        last_channels = result[:]
-
-                        # Call callback if provided
-                        if callback:
-                            callback(result)
-
-                # Async sleep instead of blocking sleep
+                frame = self.read_channels()
+                if frame is not None and frame != last:
+                    last = frame[:]
+                    if callback:
+                        callback(frame)
                 await asyncio.sleep_ms(delay_ms)
-
         except asyncio.CancelledError:
             print("\nStopped")
-
-
-async def main():
-    """
-    Simple async usage example
-    """
-    # Disconnect UART0 from REPL to stop RX echo
-    uos.dupterm(None, 1)
-
-    # Create receiver
-    dmx = AsyncDMXReceiver(uart_id=0, de_pin=5, re_pin=4)
-
-    # Give it a moment to settle
-    await asyncio.sleep_ms(100)
-
-    # Clear any startup garbage
-    if dmx.uart.any():
-        _ = dmx.uart.read()
-
-    print("Starting DMX monitoring...")
-
-    # Example callback for channel 1
-    def example_callback(channels):
-        print(f"CH1: {channels[0]}")
-
-    # Continuous monitoring with callback
-    await dmx.continuous_read(callback=example_callback, delay_ms=50)
-
-
-if __name__ == "__main__":
-    try:
-        asyncio.run(main())
-    except KeyboardInterrupt:
-        print("\nStopped")
